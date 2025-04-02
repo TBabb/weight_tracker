@@ -1,0 +1,91 @@
+[project]
+name = "weight-tracker"
+version = "0.1.0"
+description = "Tool to track and analyse your weight change over time."
+readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha"
+]
+requires-python = ">=3.13"
+authors = [
+    {name = "Thomas Babb", email = "32545753+TBabb@users.noreply.github.com"},
+]
+maintainers = [
+    {name = "Thomas Babb", email = "32545753+TBabb@users.noreply.github.com"},
+]
+dependencies = [
+    # tooling
+    "setuptools>=78.1.0",
+    "setuptools-scm>=8.2.0",
+    # dataframes
+    "polars>=1.26.0",
+    # sql
+    "sqlalchemy>=2.0.40",
+    "pyarrow>=19.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "uv>=0.6.10",
+    "ruff>=0.11.2",
+    "mypy>=1.15.0",
+    "pyright>=1.1.398",
+]
+
+[project.scripts]
+update_tracker = "main:main"
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pyright]
+
+[tool.mypy]
+plugins = "numpy.typing.mypy_plugin"
+warn_unused_configs = true
+strict = true
+warn_return_any = true
+disallow_untypes_defs = true
+
+[tool.ruff]
+# Set the maximum line length to 79.
+line-length = 79
+#exclude files I' not using atm
+
+[tool.ruff.lint]
+select = [
+    "F",   # pyflakes
+    "E",   # pycodestyle
+    "W",   # pycodestyle warnings
+    "C90", # McCabe complexity
+    "I",   # isort
+    "N",   # pep8-naming
+    "D",   # pydocstyle
+    "UP",  # pyupgrade
+    "ANN", # flake8-annotations
+    "S",   # flake8-bandit
+    "BLE", # flake8-bliend-except
+    "FBT", # flake8-boolean-trap
+    "B",   # flake8-bugbear
+    "A",   # flake8-builtings
+    "C4",  # flake8-comprehensions
+    "EM",  # flake8-errmsg
+    "INP", # flake8-import conventions
+    "RET", # flake8-return
+    "PTH", # flake8-use-pathlib
+    "TD",  # flake8-todos
+    "FIX", # flake8-fixme
+    "PD",  # pandas-vet
+    "NPY", # numpy-specific rules
+    "RUF", # ruff specific rules
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.format]
+

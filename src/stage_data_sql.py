@@ -1,0 +1,100 @@
+"""Script to import data from csv into a sqlite database."""
+# TODO(Tom Babb): write better docstring
+
+###############
+# <Libraries> #
+###############
+
+import sqlite3
+from pathlib import Path
+
+import polars as pl
+from sqlalchemy import Engine, create_engine
+
+################
+# <\Libraries> #
+################
+###########
+# <Paths> #
+###########
+
+input_csv_path = Path().cwd() / "data" / "raw" / "example_data.csv"
+output_sqlite_path = Path().cwd() / "data" / "processed" / "sql_database.db"
+
+############
+# <\Paths> #
+############
+###################
+# <Main Function> #
+###################
+
+
+def main(
+    input_csv_path: Path | str = input_csv_path,
+    output_sqlite_path: Path | str = output_sqlite_path,
+) -> None:
+    """Stage csv data into sqlite database.
+
+    Parameters
+    ----------
+    input_csv_path: pathlib.Path | str
+        Path to csv that we want to stage.
+    output_sqlite_path: pathlib.Path | str
+        Path to sqlite database.
+    """
+    ##############
+    # <Read csv> #
+    ##############
+
+    try:
+        staging_data_df: pl.DataFrame = pl.read_csv(input_csv_path)
+    except Exception:
+        raise
+
+    ###############
+    # <\Read csv> #
+    ###############
+    #########################
+    # <Connect to Database> #
+    #########################
+
+    # create database if it does not already exist
+    sqlite3.connect(output_sqlite_path)
+
+    # create sqlalchemy connection to database for manipulation
+    if isinstance(output_sqlite_path, str):
+        conn_uri: str = str(Path(output_sqlite_path).as_uri()).replace(
+            "file", "sqlite"
+        )
+    else:
+        conn_uri: str = str(output_sqlite_path.as_uri()).replace(
+            "file", "sqlite"
+        )
+    sql_engine: Engine = create_engine(conn_uri)
+
+    ##########################
+    # <\Connect to Database> #
+    ##########################
+    ##########################
+    # <Create Staging Table> #
+    ##########################
+
+    # create / update staging table
+    with sql_engine.connect() as conn:
+        staging_data_df.write_database(
+            table_name="staging_mass_data",
+            connection=conn,
+            if_table_exists="replace",
+        )
+
+    ###########################
+    # <\Create Staging Table> #
+    ###########################
+
+
+####################
+# <\Main Function> #
+####################
+
+if __name__ == "__main__":
+    main(input_csv_path=input_csv_path, output_sqlite_path=output_sqlite_path)
