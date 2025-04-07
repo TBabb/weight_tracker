@@ -62,7 +62,7 @@ def main(input_sqlite_path: Path | str = input_sqlite_path) -> None:
     ######################
 
     mass_spc: spc.SpcSolver = spc.SpcSolver().solve(
-        staging_data["Date"], staging_data["Mass (kg)"]
+        staging_data["date"], staging_data["mass_kg"]
     )
 
     #######################
