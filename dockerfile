@@ -13,7 +13,7 @@ RUN uv pip install --no-cache-dir -r pyproject.toml --system
 
 # copy over project
 COPY ./src ./src
-COPY ./data/raw ./data/raw
+COPY ./data/raw/example_data.csv ./data/raw/example_data.csv
 COPY ./data/processed/.gitkeep ./data/processed/.gitkeep
 
 # setup debugging
@@ -23,6 +23,7 @@ RUN uv pip install --no-cache-dir debugpy --system
 EXPOSE 5678 
 
 # run debug commands
+ENTRYPOINT ["python"]
 CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "./src/stage_data_sql.py"]
 
 # run commands

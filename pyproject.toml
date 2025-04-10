@@ -18,6 +18,7 @@ dependencies = [
     "setuptools",
     "setuptools-scm",
     # dataframes
+    "pandas",
     "polars",
     "pyarrow",
     # sql
