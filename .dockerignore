@@ -1,8 +1,5 @@
 README.md
-./data/processed/sql_database.db
-.gitkeep
 *.xlsx
-.mypy_cache
 .venv
 .vscode
 
