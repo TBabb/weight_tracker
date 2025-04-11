@@ -5,6 +5,9 @@
 from typing import Self
 
 import polars as pl
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 ################
 # <\Libraries> #
@@ -84,8 +87,9 @@ class SpcSolver:
 
         date_start: int = 0
         regression_limit: int = date_start + self.sample_size - 1
+        max_date: int = data_df.select(pl.col("date_int").max())[0, 0]
 
-        while date_start < data_df.shape[0] - 1:
+        while date_start < max_date:
             data_df = data_df.with_columns(
                 pl.when(pl.col("date_int").ge(pl.lit(date_start)))
                 .then(index_no)
@@ -124,9 +128,9 @@ class SpcSolver:
                     .alias("alpha"),
                 )
                 .with_columns(
-                    (alpha + beta * pl.col("date_int")).alias(
-                        "regression_value"
-                    )
+                    (
+                        pl.col("alpha") + pl.col("beta") * pl.col("date_int")
+                    ).alias("regression_value")
                 )
                 .with_columns(
                     (pl.col("data") - pl.col("regression_value")).alias(
@@ -168,20 +172,117 @@ class SpcSolver:
                 )
             )
 
-            first_outlier: int = data_df.filter(
-                pl.col("outlier_bool").and_(
-                    pl.col("date_int").ge(pl.lit(date_start))
-                )
-            ).filter(pl.col("date_int").eq(pl.col("date_int").min()))[
-                "date_int"
-            ][0]
+            # check if any outliers,
+            # if not we're done, if so create next regression
+            if data_df["outlier_bool"].sum() > 0:
+                first_outlier: int = data_df.filter(
+                    pl.col("outlier_bool").and_(
+                        pl.col("date_int").ge(pl.lit(date_start))
+                    )
+                ).filter(pl.col("date_int").eq(pl.col("date_int").min()))[
+                    "date_int"
+                ][0]
 
-            date_start = first_outlier - 1
-            regression_limit = date_start + self.sample_size - 1
+                date_start = first_outlier - 1
+                regression_limit = date_start + self.sample_size - 1
+            else:
+                break
 
-            self.data_df = data_df
+        self.data_df = data_df
 
         return self
+
+    def plot(self: Self) -> tuple[Figure, Axes]:
+        fig = plt.figure()
+        ax = plt.axes()
+
+        plt.xlabel("Date")
+        plt.ylabel("Data")
+        plt.title("Data SPC Plot")
+
+        plt.legend(loc="upper right")
+
+        plt.minorticks_on()
+        plt.grid(
+            visible=True,
+            which="minor",
+            axis="both",
+            linestyle=":",
+            color="k",
+            linewidth=1,
+        )
+        plt.grid(
+            visible=True,
+            which="major",
+            axis="both",
+            linestyle="-",
+            color="k",
+            linewidth=1,
+        )
+
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"],
+            "k:",
+            linewidth=2,
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"] + self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+            label="fit $\\pm$ 2 s.t.d",
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"] - self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"]
+            + 2 * self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+            label="fit $\\pm$ 2 s.t.d",
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"]
+            - 2 * self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"]
+            + 3 * self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+            label="fit $\\pm$ 3 s.t.d",
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"]
+            - 3 * self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["data"],
+            "o",
+            markerfacecolor="r",
+            markeredgecolor="k",
+            markersize=6,
+            markeredgewidth=1,
+            label="data",
+        )
+
+        plt.show()
+
+        return fig, ax
 
 
 ################

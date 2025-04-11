@@ -68,6 +68,15 @@ def main(input_sqlite_path: Path | str = input_sqlite_path) -> None:
     #######################
     # <\Run SPC Analysis> #
     #######################
+    ###########
+    # <Plot> #
+    ###########
+
+    fig, ax = mass_spc.plot()
+
+    ###########
+    # <\Plot> #
+    ###########
 
     pass
 
