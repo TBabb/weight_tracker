@@ -4,6 +4,13 @@
 
 ## Using This Project
 
+## Personal Learning Outcomes
+
+- [ ] Practice using Docker
+- [ ] continue developing polars skills
+- [ ] gain experience with sqlite
+- [ ] build knowledge of SPC methodology
+
 ## TODO
 
 - [ ] spc class

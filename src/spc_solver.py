@@ -23,9 +23,12 @@ class SpcSolver:
     time_series: pl.Series
     data_series: pl.Series
     data_df: pl.DataFrame
+    _spc_intervals_df: pl.DataFrame
 
     def __init__(
-        self: Self, time_frame: str = "d", sample_size: int = 30
+        self: Self,
+        time_frame: str = "1d",
+        sample_size: int = 30,
     ) -> None:
         self.sample_size = sample_size
         self.time_frame = time_frame
@@ -63,18 +66,23 @@ class SpcSolver:
                 .alias("date")
             )
 
+        data_df = data_df.group_by_dynamic("date", every=self.time_frame).agg(
+            pl.col("data").count().alias("count_data"),
+            pl.col("data").mean().alias("mean_data"),
+            pl.col("data").std().alias("std_data"),
+        )
+
         # index for spc fit number
-        index_no: int = 0
+        spc_index_no: int = 0
 
         # create integer date column
         data_df = data_df.with_columns(
-            (pl.col("date") - pl.col("date").min())
-            .dt.total_days()
-            .alias("date_int")
+            pl.col("date").cum_count().alias("index")
         )
 
         # create null columns for later use
         data_df = data_df.with_columns(
+            pl.lit(None).alias("spc_index"),
             pl.lit(None).alias("alpha"),
             pl.lit(None).alias("beta"),
             pl.lit(None).alias("regression_value"),
@@ -87,53 +95,53 @@ class SpcSolver:
 
         date_start: int = 0
         regression_limit: int = date_start + self.sample_size - 1
-        max_date: int = data_df.select(pl.col("date_int").max())[0, 0]
+        max_index: int = data_df.select(pl.col("index").max())[0, 0]
 
-        while date_start < max_date:
+        while date_start < max_index:
             data_df = data_df.with_columns(
-                pl.when(pl.col("date_int").ge(pl.lit(date_start)))
-                .then(index_no)
-                .otherwise(pl.col("date_int"))
-                .alias("index")
+                pl.when(pl.col("index").ge(pl.lit(date_start)))
+                .then(spc_index_no)
+                .otherwise(pl.col("spc_index"))
+                .alias("spc_index")
             )
-            index_no += 1
+            spc_index_no += 1
 
             training_interval_expr: pl.Expr = (
-                pl.col("date_int")
+                pl.col("index")
                 .le(regression_limit)
-                .and_(pl.col("date_int").ge(date_start))
+                .and_(pl.col("index").ge(date_start))
             )
 
             beta: float = data_df.filter(training_interval_expr).select(
                 pl.cov(
-                    pl.col("data"),
-                    pl.col("date_int"),
+                    pl.col("mean_data"),
+                    pl.col("index"),
                 )
-                / pl.col("date_int").var()
+                / pl.col("index").var()
             )[0, 0]
 
             alpha: float = data_df.filter(training_interval_expr).select(
-                pl.col("data").mean() - beta * pl.col("date_int").mean()
+                pl.col("mean_data").mean() - beta * pl.col("index").mean()
             )[0, 0]
 
             data_df = (
                 data_df.with_columns(
-                    pl.when(pl.col("date_int").ge(date_start))
+                    pl.when(pl.col("index").ge(date_start))
                     .then(beta)
                     .otherwise(pl.col("beta"))
                     .alias("beta"),
-                    pl.when(pl.col("date_int").ge(date_start))
+                    pl.when(pl.col("index").ge(date_start))
                     .then(alpha)
                     .otherwise(pl.col("alpha"))
                     .alias("alpha"),
                 )
                 .with_columns(
-                    (
-                        pl.col("alpha") + pl.col("beta") * pl.col("date_int")
-                    ).alias("regression_value")
+                    (pl.col("alpha") + pl.col("beta") * pl.col("index")).alias(
+                        "regression_value"
+                    )
                 )
                 .with_columns(
-                    (pl.col("data") - pl.col("regression_value")).alias(
+                    (pl.col("mean_data") - pl.col("regression_value")).alias(
                         "residual"
                     )
                 )
@@ -149,17 +157,17 @@ class SpcSolver:
 
             data_df = (
                 data_df.with_columns(
-                    pl.when(pl.col("date_int").ge(date_start))
+                    pl.when(pl.col("index").ge(date_start))
                     .then(pl.lit(residual_mean))
                     .otherwise(pl.col("residual_mean"))
                     .alias("residual_mean"),
-                    pl.when(pl.col("date_int").ge(date_start))
+                    pl.when(pl.col("index").ge(date_start))
                     .then(pl.lit(residual_std))
                     .otherwise(pl.col("residual_std"))
                     .alias("residual_std"),
                 )
                 .with_columns(
-                    pl.when(pl.col("date_int").ge(date_start))
+                    pl.when(pl.col("index").ge(date_start))
                     .then(
                         (pl.col("residual") - pl.col("residual_mean"))
                         / pl.col("residual_std")
@@ -177,30 +185,44 @@ class SpcSolver:
             if data_df["outlier_bool"].sum() > 0:
                 first_outlier: int = data_df.filter(
                     pl.col("outlier_bool").and_(
-                        pl.col("date_int").ge(pl.lit(date_start))
+                        pl.col("index").ge(pl.lit(date_start))
                     )
-                ).filter(pl.col("date_int").eq(pl.col("date_int").min()))[
-                    "date_int"
-                ][0]
+                ).filter(pl.col("index").eq(pl.col("index").min()))["index"][0]
 
                 date_start = first_outlier - 1
                 regression_limit = date_start + self.sample_size - 1
             else:
                 break
 
+        spc_intervals_data_df: pl.DataFrame = (
+            data_df.group_by(
+                ["spc_index", "alpha", "beta", "residual_mean", "residual_std"]
+            )
+            .agg(
+                pl.col("spc_index").count().alias("num_data_points"),
+                pl.col("date").min().alias("start_date"),
+                pl.col("date").max().alias("end_date"),
+            )
+            .sort("spc_index")
+        )
+
+        self._spc_intervals_df = spc_intervals_data_df
+
         self.data_df = data_df
 
         return self
 
-    def plot(self: Self) -> tuple[Figure, Axes]:
+    def plot(
+        self: Self,
+        min_date: pl.Date | None = None,
+        max_date: pl.Date | None = None,
+    ) -> tuple[Figure, Axes]:
         fig = plt.figure()
         ax = plt.axes()
 
         plt.xlabel("Date")
         plt.ylabel("Data")
         plt.title("Data SPC Plot")
-
-        plt.legend(loc="upper right")
 
         plt.minorticks_on()
         plt.grid(
@@ -271,16 +293,21 @@ class SpcSolver:
         )
         plt.plot(
             self.data_df["date"],
-            self.data_df["data"],
+            self.data_df["mean_data"],
             "o",
             markerfacecolor="r",
             markeredgecolor="k",
-            markersize=6,
+            markersize=8,
             markeredgewidth=1,
-            label="data",
+            label="mean data",
         )
 
-        plt.show()
+        if min_date is not None:
+            plt.xlim(left=min_date)
+        if max_date is not None:
+            plt.xlim(right=max_date)
+
+        plt.legend(loc="upper right")
 
         return fig, ax
 
