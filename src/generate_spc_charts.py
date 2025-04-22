@@ -8,6 +8,7 @@ import sqlite3
 from pathlib import Path
 
 import polars as pl
+from matplotlib import pyplot as plt
 
 import spc_solver as spc
 
@@ -61,13 +62,45 @@ def main(input_sqlite_path: Path | str = input_sqlite_path) -> None:
     # <Run SPC Analysis> #
     ######################
 
-    mass_spc: spc.SpcSolver = spc.SpcSolver().solve(
-        staging_data["Date"], staging_data["Mass (kg)"]
+    daily_mass_spc: spc.SpcSolver = spc.SpcSolver().solve(
+        staging_data["date"], staging_data["mass_kg"]
+    )
+
+    weekly_mass_spc: spc.SpcSolver = spc.SpcSolver(time_frame="1w").solve(
+        staging_data["date"],
+        staging_data["mass_kg"],
+    )
+
+    monthly_mass_spc: spc.SpcSolver = spc.SpcSolver(time_frame="1mo").solve(
+        staging_data["date"],
+        staging_data["mass_kg"],
+    )
+
+    quarterly_mass_spc: spc.SpcSolver = spc.SpcSolver(time_frame="1q").solve(
+        staging_data["date"],
+        staging_data["mass_kg"],
     )
 
     #######################
     # <\Run SPC Analysis> #
     #######################
+    ###########
+    # <Plot> #
+    ###########
+
+    fig, ax = daily_mass_spc.plot()
+
+    fig, ax = weekly_mass_spc.plot()
+
+    fig, ax = monthly_mass_spc.plot()
+
+    fig, ax = quarterly_mass_spc.plot()
+
+    plt.show()
+
+    ###########
+    # <\Plot> #
+    ###########
 
     pass
 

@@ -15,21 +15,24 @@ maintainers = [
 ]
 dependencies = [
     # tooling
-    "setuptools>=78.1.0",
-    "setuptools-scm>=8.2.0",
+    "setuptools",
+    "setuptools-scm",
     # dataframes
-    "polars>=1.26.0",
+    "pandas",
+    "polars",
+    "pyarrow",
     # sql
-    "sqlalchemy>=2.0.40",
-    "pyarrow>=19.0.1",
+    "sqlalchemy",
+    # plotting
+    "matplotlib",
 ]
 
 [dependency-groups]
 dev = [
-    "uv>=0.6.10",
-    "ruff>=0.11.2",
-    "mypy>=1.15.0",
-    "pyright>=1.1.398",
+    "uv",
+    "ruff",
+    "mypy",
+    "pyright",
 ]
 
 [project.scripts]

@@ -63,13 +63,9 @@ def main(
 
     # create sqlalchemy connection to database for manipulation
     if isinstance(output_sqlite_path, str):
-        conn_uri: str = str(Path(output_sqlite_path).as_uri()).replace(
-            "file", "sqlite"
-        )
+        conn_uri: str = "sqlite:///" + output_sqlite_path
     else:
-        conn_uri: str = str(output_sqlite_path.as_uri()).replace(
-            "file", "sqlite"
-        )
+        conn_uri = "sqlite:///" + str(output_sqlite_path.resolve())
     sql_engine: Engine = create_engine(conn_uri)
 
     ##########################

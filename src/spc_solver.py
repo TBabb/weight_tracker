@@ -2,9 +2,12 @@
 # <Libraries> #
 ###############
 
-from typing import Literal, Self
+from typing import Self
 
 import polars as pl
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 ################
 # <\Libraries> #
@@ -19,9 +22,13 @@ class SpcSolver:
     time_frame: str
     time_series: pl.Series
     data_series: pl.Series
+    data_df: pl.DataFrame
+    _spc_intervals_df: pl.DataFrame
 
     def __init__(
-        self: Self, time_frame: str = "d", sample_size: int = 30
+        self: Self,
+        time_frame: str = "1d",
+        sample_size: int = 30,
     ) -> None:
         self.sample_size = sample_size
         self.time_frame = time_frame
@@ -47,29 +54,262 @@ class SpcSolver:
             raise ValueError(msg)
 
         # create dataframe for calculations
-        data_df = pl.DataFrame(data={'date': time_series, 'data': data_series},schema=pl.Schema({'date': pl.Date(),'data': pl.Float64()}))
+        data_df = pl.DataFrame(data={"date": time_series, "data": data_series})
+
+        # ensure "date" column has date dtype, if is string dtype, then convert
+        # TODO(Tom Babb):  this shouldnt be necessary
+        # - typing is going wrong when querying from database, need to fix
+        if data_df["date"].dtype == pl.String():
+            data_df = data_df.with_columns(
+                pl.col("date")
+                .str.to_datetime(format=r"%d/%m/%Y", strict=True, exact=True)
+                .alias("date")
+            )
+
+        data_df = data_df.group_by_dynamic("date", every=self.time_frame).agg(
+            pl.col("data").count().alias("count_data"),
+            pl.col("data").mean().alias("mean_data"),
+            pl.col("data").std().alias("std_data"),
+        )
 
         # index for spc fit number
-        data_df=data_df.with_columns(pl.when(pl.arange(0,pl.count()).lt(self.sample_size)).then(0).otherwise(None).alias('index'))
+        spc_index_no: int = 0
 
-        # calculate initial regression fit
-        beta_0: float = pl.cov(data_series[0 : self.sample_size],time_series[0 : self.sample_size]) / time_series[0 : self.sample_size].var()
-        alpha_0: float = data_series[0 : self.sample_size].mean() - beta_0 * time_series[0 : self.sample_size].mean()
+        # create integer date column
+        data_df = data_df.with_columns(
+            pl.col("date").cum_count().alias("index")
+        )
 
-        # calculate initial residuals
-        residuals_0: pl.Series = data_series - alpha_0 + beta_0 * time_series
+        # create null columns for later use
+        data_df = data_df.with_columns(
+            pl.lit(None).alias("spc_index"),
+            pl.lit(None).alias("alpha"),
+            pl.lit(None).alias("beta"),
+            pl.lit(None).alias("regression_value"),
+            pl.lit(None).alias("residual"),
+            pl.lit(None).alias("residual_mean"),
+            pl.lit(None).alias("residual_std"),
+            pl.lit(None).alias("z_score"),
+            pl.lit(None).alias("outlier_bool"),
+        )
 
-        # find Z values
-        z_values_0: pl.Series = (residuals_0 - residuals_0.mean() )/ residuals_0.std()
+        date_start: int = 0
+        regression_limit: int = date_start + self.sample_size - 1
+        max_index: int = data_df.select(pl.col("index").max())[0, 0]
 
-        # find outliers
-        outliers_0: pl.Series = z_values_0.abs() >= 3
+        while date_start < max_index:
+            data_df = data_df.with_columns(
+                pl.when(pl.col("index").ge(pl.lit(date_start)))
+                .then(spc_index_no)
+                .otherwise(pl.col("spc_index"))
+                .alias("spc_index")
+            )
+            spc_index_no += 1
 
-        # find first outlier
-        outliers_0.first()
+            training_interval_expr: pl.Expr = (
+                pl.col("index")
+                .le(regression_limit)
+                .and_(pl.col("index").ge(date_start))
+            )
 
+            beta: float = data_df.filter(training_interval_expr).select(
+                pl.cov(
+                    pl.col("mean_data"),
+                    pl.col("index"),
+                )
+                / pl.col("index").var()
+            )[0, 0]
+
+            alpha: float = data_df.filter(training_interval_expr).select(
+                pl.col("mean_data").mean() - beta * pl.col("index").mean()
+            )[0, 0]
+
+            data_df = (
+                data_df.with_columns(
+                    pl.when(pl.col("index").ge(date_start))
+                    .then(beta)
+                    .otherwise(pl.col("beta"))
+                    .alias("beta"),
+                    pl.when(pl.col("index").ge(date_start))
+                    .then(alpha)
+                    .otherwise(pl.col("alpha"))
+                    .alias("alpha"),
+                )
+                .with_columns(
+                    (pl.col("alpha") + pl.col("beta") * pl.col("index")).alias(
+                        "regression_value"
+                    )
+                )
+                .with_columns(
+                    (pl.col("mean_data") - pl.col("regression_value")).alias(
+                        "residual"
+                    )
+                )
+            )
+
+            residual_mean: float = data_df.filter(
+                training_interval_expr
+            ).select(pl.col("residual").mean())[0, 0]
+
+            residual_std: float = data_df.filter(
+                training_interval_expr
+            ).select(pl.col("residual").std())[0, 0]
+
+            data_df = (
+                data_df.with_columns(
+                    pl.when(pl.col("index").ge(date_start))
+                    .then(pl.lit(residual_mean))
+                    .otherwise(pl.col("residual_mean"))
+                    .alias("residual_mean"),
+                    pl.when(pl.col("index").ge(date_start))
+                    .then(pl.lit(residual_std))
+                    .otherwise(pl.col("residual_std"))
+                    .alias("residual_std"),
+                )
+                .with_columns(
+                    pl.when(pl.col("index").ge(date_start))
+                    .then(
+                        (pl.col("residual") - pl.col("residual_mean"))
+                        / pl.col("residual_std")
+                    )
+                    .otherwise(pl.col("z_score"))
+                    .alias("z_score")
+                )
+                .with_columns(
+                    (pl.col("z_score").abs() >= 3).alias("outlier_bool")
+                )
+            )
+
+            # check if any outliers,
+            # if not we're done, if so create next regression
+            if data_df["outlier_bool"].sum() > 0:
+                first_outlier: int = data_df.filter(
+                    pl.col("outlier_bool").and_(
+                        pl.col("index").ge(pl.lit(date_start))
+                    )
+                ).filter(pl.col("index").eq(pl.col("index").min()))["index"][0]
+
+                date_start = first_outlier - 1
+                regression_limit = date_start + self.sample_size - 1
+            else:
+                break
+
+        spc_intervals_data_df: pl.DataFrame = (
+            data_df.group_by(
+                ["spc_index", "alpha", "beta", "residual_mean", "residual_std"]
+            )
+            .agg(
+                pl.col("spc_index").count().alias("num_data_points"),
+                pl.col("date").min().alias("start_date"),
+                pl.col("date").max().alias("end_date"),
+            )
+            .sort("spc_index")
+        )
+
+        self._spc_intervals_df = spc_intervals_data_df
+
+        self.data_df = data_df
 
         return self
+
+    def plot(
+        self: Self,
+        min_date: pl.Date | None = None,
+        max_date: pl.Date | None = None,
+    ) -> tuple[Figure, Axes]:
+        fig = plt.figure()
+        ax = plt.axes()
+
+        plt.xlabel("Date")
+        plt.ylabel("Data")
+        plt.title("Data SPC Plot")
+
+        plt.minorticks_on()
+        plt.grid(
+            visible=True,
+            which="minor",
+            axis="both",
+            linestyle=":",
+            color="k",
+            linewidth=1,
+        )
+        plt.grid(
+            visible=True,
+            which="major",
+            axis="both",
+            linestyle="-",
+            color="k",
+            linewidth=1,
+        )
+
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"],
+            "k:",
+            linewidth=2,
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"] + self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+            label="fit $\\pm$ 2 s.t.d",
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"] - self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"]
+            + 2 * self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+            label="fit $\\pm$ 2 s.t.d",
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"]
+            - 2 * self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"]
+            + 3 * self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+            label="fit $\\pm$ 3 s.t.d",
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["regression_value"]
+            - 3 * self.data_df["residual_std"],
+            "k:",
+            linewidth=2,
+        )
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["mean_data"],
+            "o",
+            markerfacecolor="r",
+            markeredgecolor="k",
+            markersize=8,
+            markeredgewidth=1,
+            label="mean data",
+        )
+
+        if min_date is not None:
+            plt.xlim(left=min_date)
+        if max_date is not None:
+            plt.xlim(right=max_date)
+
+        plt.legend(loc="upper right")
+
+        return fig, ax
 
 
 ################
