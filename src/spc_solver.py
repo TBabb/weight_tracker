@@ -83,8 +83,8 @@ class SpcSolver:
         # create null columns for later use
         data_df = data_df.with_columns(
             pl.lit(None).alias("spc_index"),
-            pl.lit(None).alias("alpha"),
-            pl.lit(None).alias("beta"),
+            pl.lit(None).alias("mean_alpha"),
+            pl.lit(None).alias("mean_beta"),
             pl.lit(None).alias("regression_value"),
             pl.lit(None).alias("residual"),
             pl.lit(None).alias("residual_mean"),
@@ -112,7 +112,7 @@ class SpcSolver:
                 .and_(pl.col("index").ge(date_start))
             )
 
-            beta: float = data_df.filter(training_interval_expr).select(
+            mean_beta: float = data_df.filter(training_interval_expr).select(
                 pl.cov(
                     pl.col("mean_data"),
                     pl.col("index"),
@@ -120,25 +120,26 @@ class SpcSolver:
                 / pl.col("index").var()
             )[0, 0]
 
-            alpha: float = data_df.filter(training_interval_expr).select(
-                pl.col("mean_data").mean() - beta * pl.col("index").mean()
+            mean_alpha: float = data_df.filter(training_interval_expr).select(
+                pl.col("mean_data").mean() - mean_beta * pl.col("index").mean()
             )[0, 0]
 
             data_df = (
                 data_df.with_columns(
                     pl.when(pl.col("index").ge(date_start))
-                    .then(beta)
-                    .otherwise(pl.col("beta"))
-                    .alias("beta"),
+                    .then(mean_beta)
+                    .otherwise(pl.col("mean_beta"))
+                    .alias("mean_beta"),
                     pl.when(pl.col("index").ge(date_start))
-                    .then(alpha)
-                    .otherwise(pl.col("alpha"))
-                    .alias("alpha"),
+                    .then(mean_alpha)
+                    .otherwise(pl.col("mean_alpha"))
+                    .alias("mean_alpha"),
                 )
                 .with_columns(
-                    (pl.col("alpha") + pl.col("beta") * pl.col("index")).alias(
-                        "regression_value"
-                    )
+                    (
+                        pl.col("mean_alpha")
+                        + pl.col("mean_beta") * pl.col("index")
+                    ).alias("regression_value")
                 )
                 .with_columns(
                     (pl.col("mean_data") - pl.col("regression_value")).alias(
@@ -182,21 +183,33 @@ class SpcSolver:
 
             # check if any outliers,
             # if not we're done, if so create next regression
-            if data_df["outlier_bool"].sum() > 0:
+            if (
+                data_df.filter(pl.col("index").gt(date_start))[
+                    "outlier_bool"
+                ].sum()
+                > 0
+            ):
                 first_outlier: int = data_df.filter(
                     pl.col("outlier_bool").and_(
                         pl.col("index").ge(pl.lit(date_start))
                     )
                 ).filter(pl.col("index").eq(pl.col("index").min()))["index"][0]
 
-                date_start = first_outlier - 1
+                date_start = first_outlier + 1
                 regression_limit = date_start + self.sample_size - 1
+                print(date_start)
             else:
                 break
 
         spc_intervals_data_df: pl.DataFrame = (
             data_df.group_by(
-                ["spc_index", "alpha", "beta", "residual_mean", "residual_std"]
+                [
+                    "spc_index",
+                    "mean_alpha",
+                    "mean_beta",
+                    "residual_mean",
+                    "residual_std",
+                ]
             )
             .agg(
                 pl.col("spc_index").count().alias("num_data_points"),
@@ -216,13 +229,15 @@ class SpcSolver:
         self: Self,
         min_date: pl.Date | None = None,
         max_date: pl.Date | None = None,
-    ) -> tuple[Figure, Axes]:
+    ) -> tuple[Figure, list[Axes]]:
         fig = plt.figure()
-        ax = plt.axes()
+
+        # mean data plot
+        ax_1 = fig.add_subplot(2, 1, 1)
 
         plt.xlabel("Date")
-        plt.ylabel("Data")
-        plt.title("Data SPC Plot")
+        plt.ylabel("Mean Data")
+        plt.title("Mean Data SPC Plot")
 
         plt.minorticks_on()
         plt.grid(
@@ -309,7 +324,46 @@ class SpcSolver:
 
         plt.legend(loc="upper right")
 
-        return fig, ax
+        # standard deviation plot
+        ax_2 = fig.add_subplot(2, 1, 2)
+
+        plt.xlabel("Date")
+        plt.ylabel("$\\sigma$ Data")
+        plt.title("$\\sigma$ Data SPC Plot")
+
+        plt.minorticks_on()
+        plt.grid(
+            visible=True,
+            which="minor",
+            axis="both",
+            linestyle=":",
+            color="k",
+            linewidth=1,
+        )
+        plt.grid(
+            visible=True,
+            which="major",
+            axis="both",
+            linestyle="-",
+            color="k",
+            linewidth=1,
+        )
+
+        plt.plot(
+            self.data_df["date"],
+            self.data_df["std_data"],
+            "k:",
+            linewidth=2,
+        )
+
+        if min_date is not None:
+            plt.xlim(left=min_date)
+        if max_date is not None:
+            plt.xlim(right=max_date)
+
+        plt.legend(loc="upper right")
+
+        return fig, [ax_1, ax_2]
 
 
 ################

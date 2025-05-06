@@ -18,7 +18,7 @@ from sqlalchemy import Engine, create_engine
 # <Paths> #
 ###########
 
-input_csv_path = Path().cwd() / "data" / "raw" / "example_data.csv"
+input_csv_path = Path().cwd() / "data" / "raw" / "full_data.csv"
 output_sqlite_path = Path().cwd() / "data" / "processed" / "sql_database.db"
 
 ############
@@ -46,8 +46,26 @@ def main(
     # <Read csv> #
     ##############
 
+    staging_data_schema: pl.Schema = pl.Schema(
+        {
+            "date": pl.Date(),
+            "mass_kg": pl.Float64(),
+            "muscle_mass_kg": pl.Float64(),
+            "fat_mass_percent": pl.Float64(),
+            "bone_mass_kg": pl.Float64(),
+            "fat_free_mass_kg": pl.Float64(),
+            "skeletal_muscle_mass_percent": pl.Float64(),
+            "subcutaneous_fat_mass_percent": pl.Float64(),
+            "visceral_fat_no": pl.Float64(),
+            "water_mass_percent": pl.Float64(),
+            "protein_mass_percent": pl.Float64(),
+        }
+    )
+
     try:
-        staging_data_df: pl.DataFrame = pl.read_csv(input_csv_path)
+        staging_data_df: pl.DataFrame = pl.read_csv(
+            input_csv_path, schema_overrides=staging_data_schema
+        )
     except Exception:
         raise
 
@@ -86,6 +104,8 @@ def main(
     ###########################
     # <\Create Staging Table> #
     ###########################
+
+    temp = 1
 
 
 ####################
